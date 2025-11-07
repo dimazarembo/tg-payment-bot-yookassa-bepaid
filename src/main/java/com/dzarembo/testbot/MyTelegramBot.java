@@ -22,8 +22,11 @@ public class MyTelegramBot extends TelegramLongPollingBot {
     @Value("${telegram.bot.token}")
     private String botToken;
 
-    @Value("${telegram.bot.providerToken}")
-    private String providerToken;
+    @Value("${telegram.bot.yookassaProvider}")
+    private String yookassaProviderToken;
+
+    @Value("${telegram.bot.bepaidProvider}")
+    private String bepaidProviderToken;
 
     @Override
     public String getBotUsername() { return botUsername; }
@@ -34,78 +37,82 @@ public class MyTelegramBot extends TelegramLongPollingBot {
     @Override
     public void onUpdateReceived(Update update) {
 
-        // 1) Обработка pre_checkout_query — должно быть очень быстро
+        // ✅ 1. Telegram требует подтверждать pre_checkout_query
         if (update.hasPreCheckoutQuery()) {
             handlePreCheckout(update.getPreCheckoutQuery());
-            // НЕ продолжать длительную работу до ответа
             return;
         }
 
-        // 2) Сообщение с успешной оплатой
+        // ✅ 2. успешная оплата
         if (update.hasMessage() && update.getMessage().hasSuccessfulPayment()) {
             long chatId = update.getMessage().getChatId();
-            sendText(chatId, "✅ Оплата получена! Спасибо.");
-            // тут можно сохранить данные платежа (update.getMessage().getSuccessfulPayment())
+            sendText(chatId, "✅ Оплата получена! Спасибо 🙏");
             return;
         }
 
-        // 3) Обычные сообщения
+        // ✅ 3. команды пользователя
         if (update.hasMessage() && update.getMessage().hasText()) {
             String text = update.getMessage().getText().trim().toLowerCase();
             long chatId = update.getMessage().getChatId();
 
             switch (text) {
-                case "/start" -> sendText(chatId, "Привет! Напиши 'товар' чтобы получить инвойс.");
-                case "товар" -> sendInvoice(chatId);
-                default -> sendText(chatId, "Я понимаю /start и 'товар'");
+                case "/start" -> sendText(chatId,
+                        """
+                        Привет! 👋
+                        Доступные команды:
+                        💳 yookassa — встроенная оплата через ЮKassa
+                        💳 бипэйд — встроенная оплата через bePaid (Беларусь)
+                        """);
+
+                case "yookassa" -> sendInvoice(chatId, "ЮKassa", yookassaProviderToken, "RUB");
+
+                case "бипэйд" -> sendInvoice(chatId, "bePaid", bepaidProviderToken, "BYN");
+
+                default -> sendText(chatId, "Я понимаю команды /start, yookassa и бипэйд 🙂");
             }
         }
     }
 
-    private void handlePreCheckout(PreCheckoutQuery preCheckoutQuery) {
-        AnswerPreCheckoutQuery answer = AnswerPreCheckoutQuery.builder()
-                .preCheckoutQueryId(preCheckoutQuery.getId())
-                .ok(true) // подтверждаем — платеж можно обрабатывать
-                .build();
+    /** Подтверждаем pre_checkout_query — обязательно */
+    private void handlePreCheckout(PreCheckoutQuery query) {
         try {
-            // Ответ отправляем максимально быстро
-            execute(answer);
-            // Можно после ответа запустить асинхронную обработку (логирование, создание заказа и т.д.)
+            execute(AnswerPreCheckoutQuery.builder()
+                    .preCheckoutQueryId(query.getId())
+                    .ok(true)
+                    .build());
         } catch (TelegramApiException e) {
             e.printStackTrace();
-            // Если хотим отклонить платеж — отправляем ok(false) и указать reason
-            try {
-                AnswerPreCheckoutQuery decline = AnswerPreCheckoutQuery.builder()
-                        .preCheckoutQueryId(preCheckoutQuery.getId())
-                        .ok(false)
-                        .errorMessage("Ошибка на стороне сервера, попробуйте позже")
-                        .build();
-                execute(decline);
-            } catch (TelegramApiException ex) {
-                ex.printStackTrace();
-            }
         }
     }
 
-    private void sendInvoice(long chatId) {
+    /** Отправка счета через Telegram Payments API */
+    private void sendInvoice(long chatId, String providerName, String providerToken, String currency) {
         try {
+            String safeParam = providerName.equalsIgnoreCase("bePaid")
+                    ? "bepaid_payment"
+                    : "yookassa_payment";
+
             SendInvoice invoice = SendInvoice.builder()
                     .chatId(chatId)
-                    .title("Тестовый товар")
-                    .description("Оплата встроенная в Telegram через ЮKassa")
+                    .title("Тестовый товар (" + providerName + ")")
+                    .description("Оплата встроенная в Telegram через " + providerName)
                     .payload("order_" + System.currentTimeMillis())
                     .providerToken(providerToken)
-                    .currency("RUB")
-                    .prices(List.of(LabeledPrice.builder().label("Товар").amount(10000).build())) // копейки
-                    .startParameter("test-payment")
+                    .currency(currency)
+                    .prices(List.of(LabeledPrice.builder()
+                            .label("Товар")
+                            .amount(10000) // 100 BYN или RUB
+                            .build()))
+                    .startParameter(safeParam)
                     .build();
 
             execute(invoice);
         } catch (TelegramApiException e) {
             e.printStackTrace();
-            sendText(chatId, "Ошибка при создании инвойса.");
+            sendText(chatId, "⚠️ Ошибка при создании счёта (" + providerName + ")");
         }
     }
+
 
     private void sendText(long chatId, String text) {
         try {
