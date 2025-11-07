@@ -1,0 +1,10 @@
+telegram:
+  bot:
+    username:
+    token:
+    providerToken:
+
+yookassa:
+  shopId:
+  secretKey:
+  returnUrl:
