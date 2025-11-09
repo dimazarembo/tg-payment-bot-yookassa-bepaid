@@ -60,7 +60,7 @@
    ```yaml
    telegram:
      bot:
-       yookassaProvider: "<ваш токен>"
+       bepaidProvider: "<ваш токен>"
 
 ### 4️⃣ Настройте application.yml
 
